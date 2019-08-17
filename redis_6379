@@ -1,0 +1,85 @@
+#!/bin/sh
+#Configurations injected by install_server below....
+
+EXEC=/usr/local/bin/redis-server
+CLIEXEC=/usr/local/bin/redis-cli
+PIDFILE=/var/run/redis_6379.pid
+CONF="/etc/redis/6379.conf"
+#用变量REDISPORT,ip,pw分别存储端口,ip,密码
+#在用脚本启动时,将这三个量存储在临时文件$linfile
+#处理在服务运行过程中,对端口/ip/密码进行修改后无法使用脚本进行关闭的情况
+REDISPORT="`awk '/^[ ]*port/{print $2}' $CONF`"
+ip=`awk '/^[ ]*bind/{print $2}' $CONF`
+pw=`awk '/^[ ]*requirepass/{print $2}' $CONF`
+linfile=/var/log/redis_6379.lin
+cs=(p h a)
+###############
+# SysV Init Information
+# chkconfig: - 58 74
+# description: redis_6379 is the redis daemon.
+### BEGIN INIT INFO
+# Provides: redis_6379
+# Required-Start: $network $local_fs $remote_fs
+# Required-Stop: $network $local_fs $remote_fs
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Should-Start: $syslog $named
+# Should-Stop: $syslog $named
+# Short-Description: start and stop redis_6379
+# Description: Redis daemon
+### END INIT INFO
+
+
+case "$1" in
+    start)
+        if [ -f $PIDFILE ]
+        then
+            echo "$PIDFILE exists, process is already running or crashed"
+        else
+            echo "Starting Redis server..."
+            $EXEC $CONF
+		echo -e "$REDISPORT\n$ip\n$pw" > $linfile
+        fi
+        ;;
+    stop)
+        if [ ! -f $PIDFILE ]
+        then
+            echo "$PIDFILE does not exist, process is not running"
+        else
+            PID=$(cat $PIDFILE)
+            echo "Stopping ..."
+#将关闭服务的命令设置为变量以应对只设置了端口/ip/密码的任意项的情况
+		guan=$CLIEXEC
+		for i in {1..3}
+		do
+		a=`awk "NR==$i" $linfile`
+                if [ -n "$a" ];then
+                        guan="$guan -${cs[$[i-1]]} $a"
+                fi
+		done
+            $guan shutdown
+            while [ -x /proc/${PID} ]
+            do
+                echo "Waiting for Redis to shutdown ..."
+                sleep 1
+            done
+            rm -rf $linfile && echo "Redis stopped"
+        fi
+        ;;
+    status)
+        PID=$(cat $PIDFILE)
+        if [ ! -x /proc/${PID} ]
+        then
+            echo 'Redis is not running'
+        else
+            echo "Redis is running ($PID)"
+        fi
+        ;;
+    restart)
+        $0 stop
+        $0 start
+        ;;
+    *)
+        echo "Please use start, stop, restart or status as first argument"
+        ;;
+esac
